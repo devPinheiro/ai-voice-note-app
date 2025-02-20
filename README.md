@@ -104,7 +104,51 @@ A modern **Next.js 15 Starter** template featuring React 19, TypeScript 5, Tailw
         ├── hooks/            # Reusable hook functions
     ```
 
+    ## 🤝 Contributing
 
+    We welcome contributions! Here's how you can help:
+
+    ### Contributing Guidelines
+
+    1. **Fork & Clone**
+        - Fork the repository
+        - Clone your fork locally
+
+    2. **Branch**
+        - Create a new branch for your feature
+        - Use descriptive branch names (e.g., `feature/new-component`)
+
+    3. **Code**
+        - Follow the existing code style
+        - Add comments where necessary
+        - Write tests for new features
+
+    4. **Commit**
+        - Use clear, concise commit messages
+        - Reference issue numbers when applicable
+
+    5. **Test**
+        - Ensure all tests pass
+        - Check for TypeScript errors
+        - Verify build success
+
+    6. **Submit**
+        - Push your changes
+        - Create a Pull Request
+        - Fill out the PR template completely
+
+    ### Development Setup
+
+    1. Follow the installation steps above
+    2. Install recommended VS Code extensions
+    3. Enable ESLint and Prettier in your editor
+
+    ### Code Standards
+
+    - Use TypeScript strictly
+    - Follow the project's ESLint configuration
+    - Maintain component structure
+    - Keep components small and focused
 
 ### License
 
