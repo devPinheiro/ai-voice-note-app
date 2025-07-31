@@ -3,6 +3,7 @@ import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
 import { ThemeProvider } from "@/components/organism/theme-provider";
 import NavigationBar from "./(home)/_components/navigation-bar";
+import { ConvexClientProvider } from "@/components/molecules/convex-provider";
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -29,7 +30,8 @@ export default function RootLayout({
       <body
         className={`${geistSans.variable} ${geistMono.variable} antialiased`}
       >
-        <ThemeProvider
+        <ConvexClientProvider>
+          <ThemeProvider
             attribute="class"
             defaultTheme="system"
             enableSystem
@@ -38,6 +40,7 @@ export default function RootLayout({
             <NavigationBar />
             {children}
           </ThemeProvider>
+        </ConvexClientProvider>
       </body>
     </html>
   );
