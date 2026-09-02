@@ -1,50 +1,74 @@
 "use client";
 
-import * as React from "react";
+import { useCallback, useState } from "react";
 
 interface UseCopyToClipboardProps {
-    timeout?: number;
-    onCopy?: () => void;
+  onCopy?: () => void;
 }
 
-export function useCopyToClipboard({ 
-    timeout = 2000, 
-    onCopy 
-}: UseCopyToClipboardProps = {}) {
-    const [isCopied, setIsCopied] = React.useState(false);
-    const timeoutRef = React.useRef<NodeJS.Timeout>(null);
+const useCopyToClipboard = ({ onCopy }: UseCopyToClipboardProps = {}) => {
+  const [isCopied, setIsCopied] = useState(false);
 
-    const copyToClipboard = React.useCallback(async (value: string) => {
-        if (typeof window === "undefined" || !value) {
-            return;
-        }
 
-        try {
-            await navigator.clipboard.writeText(value);
-            setIsCopied(true);
-            onCopy?.();
+  const copyToClipboard = useCallback(
+    async (value: string) => {
+      if (typeof window === "undefined" || !value) {
+        return;
+      }
 
-            // Clear any existing timeout
-            if (timeoutRef.current) {
-                clearTimeout(timeoutRef.current);
-            }
+      try {
+        await navigator.clipboard.writeText(value);
+        setIsCopied(true);
+        onCopy?.();
 
-            timeoutRef.current = setTimeout(() => {
-                setIsCopied(false);
-            }, timeout);
-        } catch (error) {
-            console.error('Failed to copy:', error);
-        }
-    }, [timeout, onCopy]);
+      } catch (error) {
+        console.error("Failed to copy:", error);
+      }
+    },
+    [onCopy]
+  );
 
-    // Cleanup timeout on unmount
-    React.useEffect(() => {
-        return () => {
-            if (timeoutRef.current) {
-                clearTimeout(timeoutRef.current);
-            }
-        };
-    }, []);
 
-    return { isCopied, copyToClipboard };
+  return { isCopied, copyToClipboard };
+};
+
+
+
+export default useCopyToClipboard;
+
+
+
+
+export const copyToClipboard = async (
+	text: string,
+	options?: {
+		successMessage?: string
+		errorMessage?: string
+		onSuccess?: () => void
+		onError?: (error: Error) => void
+	}
+): Promise<boolean> => {
+	const { 
+		successMessage = 'Copied to clipboard!', 
+		errorMessage = 'Failed to copy to clipboard', 
+		onSuccess, 
+		onError 
+	} = options || {}
+
+	try {
+		await navigator.clipboard.writeText(text)
+		
+	
+		toast.success(successMessage)
+		
+		onSuccess?.()
+		return true
+	} catch (error) {
+		console.error('Copy to clipboard failed:', error)
+		
+		toast.error(errorMessage)
+		
+		onError?.(error as Error)
+		return false
+	}
 }
