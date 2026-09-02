@@ -1,35 +1,72 @@
-import { useState } from 'react'
-import reactLogo from './assets/react.svg'
-import viteLogo from '/vite.svg'
-import './App.css'
+import "./index.css";
 
-function App() {
-  const [count, setCount] = useState(0)
+import {
+  Navigate,
+  Route,
+  BrowserRouter as Router,
+  Routes,
+} from "react-router-dom";
 
+import ChatPage from "./pages/chat";
+import { LoginPage } from "./pages/LoginPage";
+import { SignUpPage } from "./pages/SignUpPage";
+import { ChatErrorBoundary } from "./components/chat/error-boundary";
+import { RouteWrapper } from "./components/molecules/route-wrapper";
+import { UnauthorizedPage } from "./pages/UnauthorizedPage";
+import { VoiceRecordingTest } from "./components/VoiceRecordingTest";
+
+function ProtectedChat() {
   return (
-    <>
-      <div>
-        <a href="https://vite.dev" target="_blank">
-          <img src={viteLogo} className="logo" alt="Vite logo" />
-        </a>
-        <a href="https://react.dev" target="_blank">
-          <img src={reactLogo} className="logo react" alt="React logo" />
-        </a>
-      </div>
-      <h1>Vite + React</h1>
-      <div className="card">
-        <button onClick={() => setCount((count) => count + 1)}>
-          count is {count}
-        </button>
-        <p>
-          Edit <code>src/App.tsx</code> and save to test HMR
-        </p>
-      </div>
-      <p className="read-the-docs">
-        Click on the Vite and React logos to learn more
-      </p>
-    </>
-  )
+    <RouteWrapper isProtected={true} redirectTo="/login">
+      <ChatErrorBoundary>
+        <ChatPage />
+      </ChatErrorBoundary>
+    </RouteWrapper>
+  );
 }
 
-export default App
+const AppRoutes = () => {
+  return (
+    <Routes>
+      <Route
+        path="/login"
+        element={
+          <RouteWrapper redirectTo="/">
+            <LoginPage />
+          </RouteWrapper>
+        }
+      />
+
+      <Route
+        path="/signup"
+        element={
+          <RouteWrapper redirectTo="/">
+            <SignUpPage />
+          </RouteWrapper>
+        }
+      />
+
+      <Route path="/whisper" element={<VoiceRecordingTest />} />
+
+      <Route element={<ProtectedChat />}>
+        <Route path="/" />
+        <Route path="c/:conversationId" />
+      </Route>
+
+      <Route path="/dashboard" element={<Navigate to="/" replace />} />
+      <Route path="/home" element={<Navigate to="/" replace />} />
+      <Route path="/unauthorized" element={<UnauthorizedPage />} />
+      <Route path="*" element={<Navigate to="/" replace />} />
+    </Routes>
+  );
+};
+
+function App() {
+  return (
+    <Router>
+      <AppRoutes />
+    </Router>
+  );
+}
+
+export default App;

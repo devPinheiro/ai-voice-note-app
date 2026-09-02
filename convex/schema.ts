@@ -7,5 +7,22 @@ export default defineSchema({
     text: v.string(),
     isCompleted: v.boolean(),
   }),
-  ...authTables
+  notes: defineTable({
+    userId: v.id("users"),
+    title: v.string(),
+    content: v.string(),
+    source: v.optional(v.union(v.literal("voice"), v.literal("text"))),
+  }).index("by_user", ["userId"]),
+  conversations: defineTable({
+    userId: v.id("users"),
+    title: v.string(),
+  }).index("by_user", ["userId"]),
+  messages: defineTable({
+    conversationId: v.id("conversations"),
+    userId: v.id("users"),
+    role: v.union(v.literal("user"), v.literal("assistant")),
+    content: v.string(),
+    source: v.optional(v.union(v.literal("voice"), v.literal("text"))),
+  }).index("by_conversation", ["conversationId"]),
+  ...authTables,
 });

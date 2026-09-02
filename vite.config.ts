@@ -1,7 +1,7 @@
 import { defineConfig } from 'vite'
 import path from "path"
-import tailwindcss from "@tailwindcss/vite"
 import react from '@vitejs/plugin-react-swc'
+import tailwindcss from "@tailwindcss/vite"
 
 // https://vite.dev/config/
 export default defineConfig({
@@ -9,6 +9,13 @@ export default defineConfig({
   resolve: {
     alias: {
       "@": path.resolve(__dirname, "./src"),
+      '@convex': path.resolve(__dirname, './convex'),
     },
+  },
+  optimizeDeps: {
+    exclude: ["@huggingface/transformers"],
+  },
+  worker: {
+    format: "es",
   },
 })
