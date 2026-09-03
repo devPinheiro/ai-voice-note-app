@@ -2,14 +2,18 @@ import { LoaderCircle, Mic, Square, Upload } from "lucide-react";
 import { useRef } from "react";
 import type { ModelStatus, RecordingState } from "../../hooks/use-voice-recording";
 import { cn } from "../../lib/utils";
+import { LiveTranscript } from "./live-transcript";
 
 const ACCEPT = "audio/*,video/mp4,video/quicktime,.mp3,.wav,.m4a,.aac,.ogg,.webm,.mp4,.mov";
 
 interface VoiceHomeProps {
   transcription: string;
+  committedTranscription: string;
+  interimTranscription: string;
   recordingState: RecordingState;
   isListening: boolean;
   isTranscribing: boolean;
+  isFinalizing: boolean;
   isSupported: boolean;
   modelStatus: ModelStatus;
   modelProgress: number;
@@ -25,9 +29,12 @@ interface VoiceHomeProps {
 
 export function VoiceHome({
   transcription,
+  committedTranscription,
+  interimTranscription,
   recordingState,
   isListening,
   isTranscribing,
+  isFinalizing,
   isSupported,
   modelStatus,
   modelProgress,
@@ -42,8 +49,12 @@ export function VoiceHome({
 }: VoiceHomeProps) {
   const fileRef = useRef<HTMLInputElement>(null);
   const isRecording = recordingState === "recording";
+  const live = isRecording || isFinalizing || isTranscribing;
   const busy = isTranscribing || Boolean(uploadProgress) || saving;
   const canRecord = isSupported && modelStatus === "ready" && !uploadProgress;
+  const showTranscript = live || Boolean(transcription.trim());
+  const committed = live ? committedTranscription : transcription;
+  const interim = live ? interimTranscription : "";
 
   const status =
     modelStatus === "loading"
@@ -54,9 +65,11 @@ export function VoiceHome({
           ? uploadProgress
           : isRecording
             ? "Listening…"
-            : isTranscribing
-              ? "Transcribing on-device…"
-              : "Tap to speak, or upload audio / mp4";
+            : isFinalizing
+              ? "Refining transcript…"
+              : isTranscribing
+                ? "Transcribing on-device…"
+                : "Tap to speak, or upload audio / mp4";
 
   return (
     <section className="flex flex-1 flex-col items-center justify-center px-4 py-8">
@@ -67,7 +80,7 @@ export function VoiceHome({
       <button
         type="button"
         onClick={onToggleRecord}
-        disabled={!canRecord}
+        disabled={!canRecord || isFinalizing}
         title={isRecording ? "Stop recording" : "Start recording"}
         className={cn(
           "relative flex h-44 w-44 items-center justify-center rounded-full transition-transform disabled:opacity-40",
@@ -89,7 +102,7 @@ export function VoiceHome({
       </button>
 
       <h1 className="mt-8 text-center text-3xl font-semibold tracking-tight">
-        {isRecording ? "Listening" : uploadProgress ? "Transcribing file" : "Speak a note"}
+        {isRecording ? "Listening" : isFinalizing ? "Refining" : uploadProgress ? "Transcribing file" : "Speak a note"}
       </h1>
       <p className="mt-2 max-w-md text-center text-sm text-[#8e8e8e]">{status}</p>
 
@@ -123,28 +136,32 @@ export function VoiceHome({
 
       {error && <p className="mt-4 max-w-md text-center text-sm text-red-400">{error}</p>}
 
-      {transcription && (
+      {showTranscript && (
         <div className="mt-8 w-full max-w-2xl rounded-2xl border border-white/10 bg-[#2a2a2a] p-5">
           <div className="mb-3 flex items-center justify-between gap-3">
-            <p className="text-xs uppercase tracking-wide text-[#8e8e8e]">Transcript</p>
+            <p className="text-xs uppercase tracking-wide text-[#8e8e8e]">
+              {isRecording ? "Live transcript" : isFinalizing ? "Refining" : "Transcript"}
+            </p>
             <button
               type="button"
               onClick={onClear}
-              className="text-xs text-[#8e8e8e] hover:text-white"
+              disabled={live}
+              className="text-xs text-[#8e8e8e] hover:text-white disabled:opacity-40"
             >
               Clear
             </button>
           </div>
-          <p className="whitespace-pre-wrap text-[15px] leading-7 text-[#ececec]">
-            {transcription}
-            {(isRecording || isTranscribing) && (
-              <span className="ml-1 inline-block h-5 w-0.5 animate-pulse bg-white" />
-            )}
-          </p>
+          <LiveTranscript
+            committed={committed}
+            interim={interim}
+            active={live}
+            emptyLabel={isFinalizing ? "Refining transcript…" : "Listening…"}
+            className="text-[15px] leading-7 text-[#ececec]"
+          />
           <button
             type="button"
             onClick={onSave}
-            disabled={!transcription.trim() || busy || isRecording}
+            disabled={!transcription.trim() || busy || isRecording || isFinalizing}
             className="mt-4 rounded-full bg-white px-4 py-2 text-sm font-medium text-black hover:bg-[#ececec] disabled:opacity-40"
           >
             {saving ? "Saving…" : "Save note"}

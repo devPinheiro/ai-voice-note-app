@@ -1,7 +1,18 @@
 export const TARGET_SAMPLE_RATE = 16_000;
-export const CHUNK_SECONDS = 5;
-export const CHUNK_SAMPLES = TARGET_SAMPLE_RATE * CHUNK_SECONDS;
+
+export const LIVE_WINDOW_SECONDS = 12;
+export const LIVE_HOP_SECONDS = 2;
+export const LIVE_MIN_SECONDS = 2;
+export const LIVE_WINDOW_SAMPLES = TARGET_SAMPLE_RATE * LIVE_WINDOW_SECONDS;
+export const LIVE_HOP_SAMPLES = TARGET_SAMPLE_RATE * LIVE_HOP_SECONDS;
+export const LIVE_MIN_SAMPLES = TARGET_SAMPLE_RATE * LIVE_MIN_SECONDS;
+
+export const FILE_CHUNK_SECONDS = 30;
+export const FILE_STRIDE_SECONDS = 5;
+export const FILE_CHUNK_SAMPLES = TARGET_SAMPLE_RATE * FILE_CHUNK_SECONDS;
+
 export const SILENCE_RMS = 0.012;
+export const SILENCE_HANGOVER_SECONDS = 0.3;
 
 const RECORDER_WORKLET = `
 class RecorderProcessor extends AudioWorkletProcessor {
@@ -27,7 +38,26 @@ export function mergeFloat32(chunks: Float32Array[]): Float32Array {
   return result;
 }
 
-export function resample(input: Float32Array, fromRate: number, toRate: number): Float32Array {
+export function lastSamples(chunks: Float32Array[], total: number, count: number): Float32Array {
+  const n = Math.min(count, total);
+  if (n <= 0) {
+    return new Float32Array(0);
+  }
+
+  const out = new Float32Array(n);
+  let needed = n;
+
+  for (let i = chunks.length - 1; i >= 0 && needed > 0; i--) {
+    const chunk = chunks[i];
+    const take = Math.min(chunk.length, needed);
+    needed -= take;
+    out.set(chunk.subarray(chunk.length - take), needed);
+  }
+
+  return out;
+}
+
+export function resampleLinear(input: Float32Array, fromRate: number, toRate: number): Float32Array {
   if (fromRate === toRate || input.length === 0) {
     return input;
   }
@@ -44,6 +74,31 @@ export function resample(input: Float32Array, fromRate: number, toRate: number):
   }
 
   return output;
+}
+
+export async function resampleOffline(
+  input: Float32Array,
+  fromRate: number,
+  toRate: number
+): Promise<Float32Array> {
+  if (fromRate === toRate || input.length === 0) {
+    return input;
+  }
+
+  try {
+    const frameCount = Math.max(1, Math.round((input.length / fromRate) * toRate));
+    const offline = new OfflineAudioContext(1, frameCount, toRate);
+    const buffer = offline.createBuffer(1, input.length, fromRate);
+    buffer.copyToChannel(input, 0);
+    const source = offline.createBufferSource();
+    source.buffer = buffer;
+    source.connect(offline.destination);
+    source.start(0);
+    const rendered = await offline.startRendering();
+    return rendered.getChannelData(0).slice();
+  } catch {
+    return resampleLinear(input, fromRate, toRate);
+  }
 }
 
 export function rootMeanSquare(samples: Float32Array): number {
@@ -87,7 +142,7 @@ export async function decodeMediaFile(file: File): Promise<Float32Array> {
 
   try {
     const audioBuffer = await context.decodeAudioData(data.slice(0));
-    return resample(mixToMono(audioBuffer), audioBuffer.sampleRate, TARGET_SAMPLE_RATE);
+    return resampleOffline(mixToMono(audioBuffer), audioBuffer.sampleRate, TARGET_SAMPLE_RATE);
   } catch {
     throw new Error(
       "Could not read audio from that file. Try mp3, wav, m4a, or an mp4 with an audio track."
@@ -96,8 +151,6 @@ export async function decodeMediaFile(file: File): Promise<Float32Array> {
     await context.close();
   }
 }
-
-export const FILE_CHUNK_SAMPLES = TARGET_SAMPLE_RATE * 30;
 
 export async function createRecorderWorklet(audioContext: AudioContext): Promise<AudioWorkletNode> {
   const blob = new Blob([RECORDER_WORKLET], { type: "application/javascript" });
