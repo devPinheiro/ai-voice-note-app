@@ -11,48 +11,25 @@ import ChatPage from "./pages/chat";
 import { LoginPage } from "./pages/LoginPage";
 import { SignUpPage } from "./pages/SignUpPage";
 import { ChatErrorBoundary } from "./components/chat/error-boundary";
-import { RouteWrapper } from "./components/molecules/route-wrapper";
 import { UnauthorizedPage } from "./pages/UnauthorizedPage";
 import { VoiceRecordingTest } from "./components/VoiceRecordingTest";
 
-function ProtectedChat() {
+function ChatShell() {
   return (
-    <RouteWrapper isProtected={true} redirectTo="/login">
-      <ChatErrorBoundary>
-        <ChatPage />
-      </ChatErrorBoundary>
-    </RouteWrapper>
+    <ChatErrorBoundary>
+      <ChatPage />
+    </ChatErrorBoundary>
   );
 }
 
 const AppRoutes = () => {
   return (
     <Routes>
-      <Route
-        path="/login"
-        element={
-          <RouteWrapper redirectTo="/">
-            <LoginPage />
-          </RouteWrapper>
-        }
-      />
-
-      <Route
-        path="/signup"
-        element={
-          <RouteWrapper redirectTo="/">
-            <SignUpPage />
-          </RouteWrapper>
-        }
-      />
-
+      <Route path="/" element={<ChatShell />} />
+      <Route path="/c/:conversationId" element={<ChatShell />} />
+      <Route path="/login" element={<LoginPage />} />
+      <Route path="/signup" element={<SignUpPage />} />
       <Route path="/whisper" element={<VoiceRecordingTest />} />
-
-      <Route element={<ProtectedChat />}>
-        <Route path="/" />
-        <Route path="c/:conversationId" />
-      </Route>
-
       <Route path="/dashboard" element={<Navigate to="/" replace />} />
       <Route path="/home" element={<Navigate to="/" replace />} />
       <Route path="/unauthorized" element={<UnauthorizedPage />} />
