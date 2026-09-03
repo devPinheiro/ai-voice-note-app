@@ -28,7 +28,7 @@ function joinText(current: string, next: string) {
 const ChatPage = () => {
   const { conversationId } = useParams();
   const navigate = useNavigate();
-  const { user, signOut } = useAuth();
+  const { user, isAuthenticated, signOut } = useAuth();
   const conversations = useQuery(api.conversations.list);
   const sendMessage = useMutation(api.conversations.send);
   const removeConversation = useMutation(api.conversations.remove);
@@ -68,7 +68,7 @@ const ChatPage = () => {
     isFinalizing,
   } = useVoiceRecording();
 
-  const userName = user?.name || user?.email || "You";
+  const userName = user?.name || user?.email || "Guest";
   const hasMessages = (messages?.length ?? 0) > 0;
   const isHome = !activeId;
 
@@ -240,7 +240,7 @@ const ChatPage = () => {
               navigate("/");
             }
           }}
-          onSignOut={() => signOut()}
+          onSignOut={isAuthenticated ? () => void signOut() : undefined}
         />
       </div>
 

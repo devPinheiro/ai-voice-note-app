@@ -14,12 +14,12 @@ export default defineSchema({
     source: v.optional(v.union(v.literal("voice"), v.literal("text"))),
   }).index("by_user", ["userId"]),
   conversations: defineTable({
-    userId: v.id("users"),
+    userId: v.optional(v.id("users")),
     title: v.string(),
   }).index("by_user", ["userId"]),
   messages: defineTable({
     conversationId: v.id("conversations"),
-    userId: v.id("users"),
+    userId: v.optional(v.id("users")),
     role: v.union(v.literal("user"), v.literal("assistant")),
     content: v.string(),
     source: v.optional(v.union(v.literal("voice"), v.literal("text"))),
