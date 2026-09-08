@@ -1,5 +1,6 @@
 import { getAuthUserId } from "@convex-dev/auth/server";
 import { v } from "convex/values";
+import type { Doc, Id } from "./_generated/dataModel";
 import { mutation, query } from "./_generated/server";
 
 function titleFromText(text: string) {
@@ -7,19 +8,35 @@ function titleFromText(text: string) {
   return firstLine.length <= 48 ? firstLine : `${firstLine.slice(0, 45).trimEnd()}…`;
 }
 
+function canAccess(
+  conversation: Doc<"conversations"> | null,
+  userId: Id<"users"> | null
+) {
+  if (!conversation) {
+    return false;
+  }
+
+  if (conversation.userId) {
+    return conversation.userId === userId;
+  }
+
+  return userId === null;
+}
+
 export const list = query({
   args: {},
   handler: async (ctx) => {
     const userId = await getAuthUserId(ctx);
-    if (!userId) {
-      return [];
+    if (userId) {
+      return await ctx.db
+        .query("conversations")
+        .withIndex("by_user", (q) => q.eq("userId", userId))
+        .order("desc")
+        .collect();
     }
 
-    return await ctx.db
-      .query("conversations")
-      .withIndex("by_user", (q) => q.eq("userId", userId))
-      .order("desc")
-      .collect();
+    const conversations = await ctx.db.query("conversations").order("desc").collect();
+    return conversations.filter((conversation) => !conversation.userId);
   },
 });
 
@@ -27,12 +44,8 @@ export const get = query({
   args: { id: v.id("conversations") },
   handler: async (ctx, args) => {
     const userId = await getAuthUserId(ctx);
-    if (!userId) {
-      return null;
-    }
-
     const conversation = await ctx.db.get(args.id);
-    if (!conversation || conversation.userId !== userId) {
+    if (!canAccess(conversation, userId)) {
       return null;
     }
 
@@ -48,10 +61,6 @@ export const send = mutation({
   },
   handler: async (ctx, args) => {
     const userId = await getAuthUserId(ctx);
-    if (!userId) {
-      throw new Error("Not authenticated");
-    }
-
     const content = args.content.trim();
     if (!content) {
       throw new Error("Message cannot be empty");
@@ -60,19 +69,19 @@ export const send = mutation({
     let conversationId = args.conversationId;
     if (!conversationId) {
       conversationId = await ctx.db.insert("conversations", {
-        userId,
+        ...(userId ? { userId } : {}),
         title: titleFromText(content),
       });
     } else {
       const conversation = await ctx.db.get(conversationId);
-      if (!conversation || conversation.userId !== userId) {
+      if (!canAccess(conversation, userId)) {
         throw new Error("Conversation not found");
       }
     }
 
     const messageId = await ctx.db.insert("messages", {
       conversationId,
-      userId,
+      ...(userId ? { userId } : {}),
       role: "user",
       content,
       source: args.source ?? "text",
@@ -86,12 +95,8 @@ export const remove = mutation({
   args: { id: v.id("conversations") },
   handler: async (ctx, args) => {
     const userId = await getAuthUserId(ctx);
-    if (!userId) {
-      throw new Error("Not authenticated");
-    }
-
     const conversation = await ctx.db.get(args.id);
-    if (!conversation || conversation.userId !== userId) {
+    if (!canAccess(conversation, userId)) {
       throw new Error("Conversation not found");
     }
 
@@ -112,12 +117,8 @@ export const listMessages = query({
   args: { conversationId: v.id("conversations") },
   handler: async (ctx, args) => {
     const userId = await getAuthUserId(ctx);
-    if (!userId) {
-      return [];
-    }
-
     const conversation = await ctx.db.get(args.conversationId);
-    if (!conversation || conversation.userId !== userId) {
+    if (!canAccess(conversation, userId)) {
       return [];
     }
 

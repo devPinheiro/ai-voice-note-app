@@ -28,7 +28,7 @@ function joinText(current: string, next: string) {
 const ChatPage = () => {
   const { conversationId } = useParams();
   const navigate = useNavigate();
-  const { user, signOut } = useAuth();
+  const { user, isAuthenticated, signOut } = useAuth();
   const conversations = useQuery(api.conversations.list);
   const sendMessage = useMutation(api.conversations.send);
   const removeConversation = useMutation(api.conversations.remove);
@@ -54,6 +54,8 @@ const ChatPage = () => {
   const {
     recordingState,
     transcription,
+    committedTranscription,
+    interimTranscription,
     isListening,
     startRecording,
     stopRecording,
@@ -63,20 +65,21 @@ const ChatPage = () => {
     modelStatus,
     modelProgress,
     isTranscribing,
+    isFinalizing,
   } = useVoiceRecording();
 
-  const userName = user?.name || user?.email || "You";
+  const userName = user?.name || user?.email || "Guest";
   const hasMessages = (messages?.length ?? 0) > 0;
   const isHome = !activeId;
 
   useEffect(() => {
-    if (recordingState === "recording" || transcription) {
+    if (recordingState === "recording" || isFinalizing || transcription) {
       setInput(joinText(baselineRef.current, transcription));
       if (transcription) {
         setSource("voice");
       }
     }
-  }, [recordingState, transcription]);
+  }, [isFinalizing, recordingState, transcription]);
 
   useEffect(() => {
     threadRef.current?.scrollTo({ top: threadRef.current.scrollHeight });
@@ -94,7 +97,7 @@ const ChatPage = () => {
 
   const handleNewChat = () => {
     if (recordingState === "recording") {
-      stopRecording();
+      void stopRecording({ finalize: false });
     }
     resetComposer();
     navigate("/");
@@ -107,7 +110,7 @@ const ChatPage = () => {
     }
 
     if (recordingState === "recording") {
-      stopRecording();
+      await stopRecording();
     }
 
     setSending(true);
@@ -128,7 +131,11 @@ const ChatPage = () => {
 
   const handleToggleVoice = () => {
     if (recordingState === "recording") {
-      stopRecording();
+      void stopRecording();
+      return;
+    }
+
+    if (isFinalizing) {
       return;
     }
 
@@ -145,7 +152,7 @@ const ChatPage = () => {
     }
 
     if (recordingState === "recording") {
-      stopRecording();
+      await stopRecording({ finalize: false });
     }
 
     setFileError(null);
@@ -180,6 +187,23 @@ const ChatPage = () => {
   };
 
   const displayedHomeText = input || transcription;
+  const prevActiveRef = useRef(activeId);
+
+  useEffect(() => {
+    if (prevActiveRef.current === activeId) {
+      return;
+    }
+
+    prevActiveRef.current = activeId;
+    void stopRecording({ finalize: false });
+    baselineRef.current = "";
+    setInput("");
+    setSource("voice");
+    setFileError(null);
+    setUploadName(null);
+    setUploadProgress(null);
+    clearTranscription();
+  }, [activeId, clearTranscription, stopRecording]);
 
   return (
     <div className="dark flex h-dvh bg-[#212121] text-[#ececec]">
@@ -216,7 +240,7 @@ const ChatPage = () => {
               navigate("/");
             }
           }}
-          onSignOut={() => signOut()}
+          onSignOut={isAuthenticated ? () => void signOut() : undefined}
         />
       </div>
 
@@ -243,9 +267,12 @@ const ChatPage = () => {
         {isHome ? (
           <VoiceHome
             transcription={displayedHomeText}
+            committedTranscription={committedTranscription}
+            interimTranscription={interimTranscription}
             recordingState={recordingState}
             isListening={isListening}
             isTranscribing={isTranscribing}
+            isFinalizing={isFinalizing}
             isSupported={isSupported}
             modelStatus={modelStatus}
             modelProgress={modelProgress}
@@ -283,7 +310,7 @@ const ChatPage = () => {
                 value={input}
                 onChange={(value) => {
                   setInput(value);
-                  if (recordingState === "idle" && !uploadProgress) {
+                  if (recordingState === "idle" && !uploadProgress && !isFinalizing) {
                     setSource("text");
                   }
                 }}
@@ -291,6 +318,9 @@ const ChatPage = () => {
                 disabled={sending}
                 recordingState={recordingState}
                 isTranscribing={isTranscribing}
+                isFinalizing={isFinalizing}
+                liveCommitted={joinText(baselineRef.current, committedTranscription)}
+                liveInterim={interimTranscription}
                 modelStatus={modelStatus}
                 modelProgress={modelProgress}
                 isSupported={isSupported}

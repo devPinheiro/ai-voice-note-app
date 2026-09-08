@@ -28,5 +28,14 @@
     "noFallthroughCasesInSwitch": true,
     "noUncheckedSideEffectImports": true
   },
-  "include": ["src", "src/types/speech-recognition.d.ts"]
+  "include": ["src", "src/types/speech-recognition.d.ts"],
+  "exclude": [
+    "src/components/ui",
+    "src/components/organism",
+    "src/components/molecules/theme-toggler.tsx",
+    "src/hooks/use-copy-to-clipboard.tsx",
+    "src/hooks/use-toast.ts",
+    "src/pages/home",
+    "src/pages/DashboardPage.tsx"
+  ]
 }

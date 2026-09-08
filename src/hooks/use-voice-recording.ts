@@ -1,13 +1,19 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
-  CHUNK_SAMPLES,
+  LIVE_HOP_SECONDS,
+  LIVE_MIN_SECONDS,
+  LIVE_WINDOW_SECONDS,
+  SILENCE_HANGOVER_SECONDS,
   createRecorderWorklet,
   isSilent,
+  lastSamples,
   mergeFloat32,
-  resample,
+  resampleOffline,
   TARGET_SAMPLE_RATE,
 } from "../lib/whisper/audio";
 import { whisperClient } from "../lib/whisper/client";
+import { agreeWindows, joinTranscript, promptTail } from "../lib/whisper/streaming";
+import { transcribePcm } from "../lib/whisper/transcribe-media";
 
 export type RecordingState = "idle" | "recording" | "paused";
 export type ModelStatus = "idle" | "loading" | "ready" | "error";
@@ -15,39 +21,62 @@ export type ModelStatus = "idle" | "loading" | "ready" | "error";
 export interface VoiceRecordingHook {
   recordingState: RecordingState;
   transcription: string;
+  committedTranscription: string;
+  interimTranscription: string;
   isListening: boolean;
   startRecording: () => Promise<void>;
   pauseRecording: () => void;
-  stopRecording: () => void;
+  stopRecording: (options?: { finalize?: boolean }) => Promise<void>;
   clearTranscription: () => void;
   error: string | null;
   isSupported: boolean;
   modelStatus: ModelStatus;
   modelProgress: number;
   isTranscribing: boolean;
+  isFinalizing: boolean;
 }
+
+type CapturePhase = "idle" | "recording" | "paused" | "finalizing";
 
 function microphoneSupported() {
   return Boolean(navigator.mediaDevices?.getUserMedia);
 }
 
-function joinTranscript(current: string, next: string) {
-  const incoming = next.trim();
-  if (!incoming) {
-    return current;
-  }
+function isLivePhase(phase: CapturePhase) {
+  return phase === "recording" || phase === "paused";
+}
 
-  if (!current) {
-    return incoming;
+function createAudioContext() {
+  try {
+    return new AudioContext({ sampleRate: TARGET_SAMPLE_RATE });
+  } catch {
+    return new AudioContext();
   }
+}
 
-  const needsSpace = !current.endsWith(" ") && !incoming.startsWith(" ");
-  return `${current}${needsSpace ? " " : ""}${incoming}`;
+async function captureMicrophone() {
+  const asrConstraints: MediaStreamConstraints = {
+    audio: {
+      channelCount: 1,
+      echoCancellation: false,
+      noiseSuppression: false,
+      autoGainControl: true,
+      sampleRate: TARGET_SAMPLE_RATE,
+    },
+  };
+
+  try {
+    return await navigator.mediaDevices.getUserMedia(asrConstraints);
+  } catch {
+    return navigator.mediaDevices.getUserMedia({ audio: true });
+  }
 }
 
 export const useVoiceRecording = (): VoiceRecordingHook => {
   const [recordingState, setRecordingState] = useState<RecordingState>("idle");
   const [transcription, setTranscription] = useState("");
+  const [committedTranscription, setCommittedTranscription] = useState("");
+  const [interimTranscription, setInterimTranscription] = useState("");
   const [isListening, setIsListening] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [isSupported, setIsSupported] = useState(false);
@@ -56,11 +85,21 @@ export const useVoiceRecording = (): VoiceRecordingHook => {
   );
   const [modelProgress, setModelProgress] = useState(whisperClient.isReady() ? 100 : 0);
   const [isTranscribing, setIsTranscribing] = useState(false);
+  const [isFinalizing, setIsFinalizing] = useState(false);
 
   const recordingStateRef = useRef<RecordingState>("idle");
+  const phaseRef = useRef<CapturePhase>("idle");
+  const sessionIdRef = useRef(0);
   const chunksRef = useRef<Float32Array[]>([]);
   const samplesRef = useRef(0);
-  const transcribeQueueRef = useRef<Promise<void>>(Promise.resolve());
+  const samplesSinceHopRef = useRef(0);
+  const nativeRateRef = useRef(TARGET_SAMPLE_RATE);
+  const lastSpeechSampleRef = useRef(0);
+  const committedRef = useRef("");
+  const interimRef = useRef("");
+  const prevWindowTextRef = useRef("");
+  const liveRunningRef = useRef(false);
+  const pendingLiveRef = useRef<Float32Array | null>(null);
   const pendingChunksRef = useRef(0);
 
   const streamRef = useRef<MediaStream | null>(null);
@@ -120,6 +159,25 @@ export const useVoiceRecording = (): VoiceRecordingHook => {
     };
   }, []);
 
+  const publishTranscript = useCallback(() => {
+    const next = joinTranscript(committedRef.current, interimRef.current);
+    setCommittedTranscription(committedRef.current);
+    setInterimTranscription(interimRef.current);
+    setTranscription(next);
+  }, []);
+
+  const resetLiveState = useCallback(() => {
+    chunksRef.current = [];
+    samplesRef.current = 0;
+    samplesSinceHopRef.current = 0;
+    lastSpeechSampleRef.current = 0;
+    committedRef.current = "";
+    interimRef.current = "";
+    prevWindowTextRef.current = "";
+    pendingLiveRef.current = null;
+    publishTranscript();
+  }, [publishTranscript]);
+
   const markTranscribeStart = useCallback(() => {
     pendingChunksRef.current += 1;
     setIsTranscribing(true);
@@ -132,45 +190,112 @@ export const useVoiceRecording = (): VoiceRecordingHook => {
     }
   }, []);
 
-  const enqueueTranscription = useCallback(
-    (audio: Float32Array) => {
-      if (audio.length === 0 || isSilent(audio)) {
+  const applyLiveResult = useCallback(
+    (text: string, sessionId: number) => {
+      if (sessionId !== sessionIdRef.current || !isLivePhase(phaseRef.current)) {
         return;
       }
 
+      const next = text.trim();
+      if (!next) {
+        return;
+      }
+
+      const previous = prevWindowTextRef.current;
+      if (previous) {
+        const { commit } = agreeWindows(previous, next);
+        if (commit) {
+          committedRef.current = joinTranscript(committedRef.current, commit);
+        }
+      }
+
+      prevWindowTextRef.current = next;
+      interimRef.current = next;
+      publishTranscript();
+    },
+    [publishTranscript]
+  );
+
+  const runLiveWindow = useCallback(
+    async (audio: Float32Array, sessionId: number) => {
+      if (audio.length === 0) {
+        return;
+      }
+
+      if (liveRunningRef.current) {
+        pendingLiveRef.current = audio;
+        return;
+      }
+
+      liveRunningRef.current = true;
       markTranscribeStart();
-      transcribeQueueRef.current = transcribeQueueRef.current
-        .then(async () => {
-          const text = await whisperClient.transcribe(audio);
-          if (text) {
-            setTranscription((current) => joinTranscript(current, text));
-          }
-        })
-        .catch((transcribeError: unknown) => {
-          console.error("Whisper transcription failed", transcribeError);
+
+      try {
+        let current: Float32Array | null = audio;
+
+        while (current && sessionId === sessionIdRef.current && isLivePhase(phaseRef.current)) {
+          const text = await whisperClient.transcribe(current, {
+            prompt: promptTail(committedRef.current),
+          });
+          applyLiveResult(text, sessionId);
+          current = pendingLiveRef.current;
+          pendingLiveRef.current = null;
+        }
+      } catch (transcribeError: unknown) {
+        console.error("Whisper transcription failed", transcribeError);
+        if (sessionId === sessionIdRef.current) {
           setError(
             transcribeError instanceof Error
               ? transcribeError.message
               : "Failed to transcribe audio on-device"
           );
-        })
-        .finally(markTranscribeEnd);
+        }
+      } finally {
+        liveRunningRef.current = false;
+        markTranscribeEnd();
+      }
     },
-    [markTranscribeEnd, markTranscribeStart]
+    [applyLiveResult, markTranscribeEnd, markTranscribeStart]
   );
 
-  const flushBuffer = useCallback(() => {
-    if (chunksRef.current.length === 0) {
+  const queueLiveWindow = useCallback(() => {
+    if (phaseRef.current !== "recording" && phaseRef.current !== "paused") {
       return;
     }
 
-    const merged = mergeFloat32(chunksRef.current);
-    chunksRef.current = [];
-    samplesRef.current = 0;
+    const rate = nativeRateRef.current;
+    const minSamples = Math.round(LIVE_MIN_SECONDS * rate);
+    if (samplesRef.current < minSamples) {
+      return;
+    }
 
-    const sampleRate = audioContextRef.current?.sampleRate ?? TARGET_SAMPLE_RATE;
-    enqueueTranscription(resample(merged, sampleRate, TARGET_SAMPLE_RATE));
-  }, [enqueueTranscription]);
+    const windowSamples = Math.round(LIVE_WINDOW_SECONDS * rate);
+    const hangoverSamples = Math.round(SILENCE_HANGOVER_SECONDS * rate);
+    const window = lastSamples(chunksRef.current, samplesRef.current, windowSamples);
+    const silentWindow = isSilent(window);
+    const silentLongEnough =
+      samplesRef.current - lastSpeechSampleRef.current > hangoverSamples;
+
+    if (silentWindow) {
+      if (silentLongEnough && interimRef.current) {
+        committedRef.current = joinTranscript(committedRef.current, interimRef.current);
+        interimRef.current = "";
+        prevWindowTextRef.current = "";
+        publishTranscript();
+      }
+      return;
+    }
+
+    lastSpeechSampleRef.current = samplesRef.current;
+    const sessionId = sessionIdRef.current;
+
+    void resampleOffline(window, rate, TARGET_SAMPLE_RATE).then((pcm) => {
+      if (sessionId !== sessionIdRef.current) {
+        return;
+      }
+      void runLiveWindow(pcm, sessionId);
+    });
+  }, [publishTranscript, runLiveWindow]);
 
   const handleAudioFrame = useCallback(
     (frame: Float32Array) => {
@@ -180,12 +305,21 @@ export const useVoiceRecording = (): VoiceRecordingHook => {
 
       chunksRef.current.push(new Float32Array(frame));
       samplesRef.current += frame.length;
+      samplesSinceHopRef.current += frame.length;
 
-      if (samplesRef.current >= CHUNK_SAMPLES) {
-        flushBuffer();
+      if (!isSilent(frame)) {
+        lastSpeechSampleRef.current = samplesRef.current;
+      }
+
+      const hopSamples = Math.round(LIVE_HOP_SECONDS * nativeRateRef.current);
+      const minSamples = Math.round(LIVE_MIN_SECONDS * nativeRateRef.current);
+
+      if (samplesRef.current >= minSamples && samplesSinceHopRef.current >= hopSamples) {
+        samplesSinceHopRef.current = 0;
+        queueLiveWindow();
       }
     },
-    [flushBuffer]
+    [queueLiveWindow]
   );
 
   const teardownCapture = useCallback(() => {
@@ -219,17 +353,14 @@ export const useVoiceRecording = (): VoiceRecordingHook => {
     }
 
     setError(null);
+    sessionIdRef.current += 1;
+    phaseRef.current = "recording";
+    resetLiveState();
 
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({
-        audio: {
-          channelCount: 1,
-          echoCancellation: true,
-          noiseSuppression: true,
-        },
-      });
+      const stream = await captureMicrophone();
 
-      const audioContext = new AudioContext({ sampleRate: TARGET_SAMPLE_RATE });
+      const audioContext = createAudioContext();
       await audioContext.resume();
 
       const source = audioContext.createMediaStreamSource(stream);
@@ -237,6 +368,7 @@ export const useVoiceRecording = (): VoiceRecordingHook => {
       const gain = audioContext.createGain();
       gain.gain.value = 0;
 
+      nativeRateRef.current = audioContext.sampleRate;
       worklet.port.onmessage = (event: MessageEvent<Float32Array>) => {
         handleAudioFrame(event.data);
       };
@@ -253,7 +385,9 @@ export const useVoiceRecording = (): VoiceRecordingHook => {
 
       setRecordingState("recording");
       setIsListening(true);
+      setIsFinalizing(false);
     } catch (startError: unknown) {
+      phaseRef.current = "idle";
       teardownCapture();
       console.error("Error starting recording:", startError);
       const name = startError instanceof DOMException ? startError.name : "";
@@ -263,11 +397,12 @@ export const useVoiceRecording = (): VoiceRecordingHook => {
           : "Failed to start recording. Check your microphone and try again."
       );
     }
-  }, [handleAudioFrame, modelStatus, teardownCapture]);
+  }, [handleAudioFrame, modelStatus, resetLiveState, teardownCapture]);
 
   const pauseRecording = useCallback(() => {
     if (recordingState === "recording") {
-      flushBuffer();
+      queueLiveWindow();
+      phaseRef.current = "paused";
       setRecordingState("paused");
       setIsListening(false);
       return;
@@ -279,25 +414,90 @@ export const useVoiceRecording = (): VoiceRecordingHook => {
         return;
       }
 
+      phaseRef.current = "recording";
       void audioContextRef.current.resume();
       setRecordingState("recording");
       setIsListening(true);
     }
-  }, [flushBuffer, recordingState, startRecording]);
+  }, [queueLiveWindow, recordingState, startRecording]);
 
-  const stopRecording = useCallback(() => {
-    flushBuffer();
+  const stopRecording = useCallback(async (options?: { finalize?: boolean }) => {
+    const shouldFinalize = options?.finalize !== false;
+    const sessionId = sessionIdRef.current;
+    const native = mergeFloat32(chunksRef.current);
+    const nativeRate = nativeRateRef.current;
+
+    pendingLiveRef.current = null;
     teardownCapture();
     setRecordingState("idle");
     setIsListening(false);
-  }, [flushBuffer, teardownCapture]);
+
+    if (!shouldFinalize) {
+      sessionIdRef.current += 1;
+      phaseRef.current = "idle";
+      setIsFinalizing(false);
+      return;
+    }
+
+    phaseRef.current = "finalizing";
+    setIsFinalizing(true);
+    markTranscribeStart();
+
+    try {
+      const pcm = await resampleOffline(native, nativeRate, TARGET_SAMPLE_RATE);
+      if (sessionId !== sessionIdRef.current) {
+        return;
+      }
+
+      if (isSilent(pcm)) {
+        committedRef.current = joinTranscript(
+          committedRef.current,
+          interimRef.current
+        ).trim();
+        interimRef.current = "";
+        prevWindowTextRef.current = "";
+        publishTranscript();
+        return;
+      }
+
+      const text = await transcribePcm(pcm);
+      if (sessionId !== sessionIdRef.current || phaseRef.current !== "finalizing") {
+        return;
+      }
+
+      committedRef.current = text.trim();
+      interimRef.current = "";
+      prevWindowTextRef.current = "";
+      publishTranscript();
+    } catch (transcribeError: unknown) {
+      console.error("Whisper final transcription failed", transcribeError);
+      if (sessionId === sessionIdRef.current) {
+        setError(
+          transcribeError instanceof Error
+            ? transcribeError.message
+            : "Failed to transcribe audio on-device"
+        );
+      }
+    } finally {
+      if (sessionId === sessionIdRef.current) {
+        phaseRef.current = "idle";
+        setIsFinalizing(false);
+      }
+      markTranscribeEnd();
+    }
+  }, [markTranscribeEnd, markTranscribeStart, publishTranscript, teardownCapture]);
 
   const clearTranscription = useCallback(() => {
-    setTranscription("");
-  }, []);
+    sessionIdRef.current += 1;
+    committedRef.current = "";
+    interimRef.current = "";
+    prevWindowTextRef.current = "";
+    publishTranscript();
+  }, [publishTranscript]);
 
   useEffect(() => {
     return () => {
+      sessionIdRef.current += 1;
       teardownCapture();
     };
   }, [teardownCapture]);
@@ -305,6 +505,8 @@ export const useVoiceRecording = (): VoiceRecordingHook => {
   return {
     recordingState,
     transcription,
+    committedTranscription,
+    interimTranscription,
     isListening,
     startRecording,
     pauseRecording,
@@ -315,5 +517,6 @@ export const useVoiceRecording = (): VoiceRecordingHook => {
     modelStatus,
     modelProgress,
     isTranscribing,
+    isFinalizing,
   };
 };

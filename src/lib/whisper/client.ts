@@ -1,3 +1,5 @@
+import type { TranscribeOptions } from "./types";
+
 export type WhisperProgress = {
   status?: string;
   name?: string;
@@ -101,7 +103,7 @@ class WhisperClient {
     return this.loading;
   }
 
-  async transcribe(audio: Float32Array) {
+  async transcribe(audio: Float32Array, options?: TranscribeOptions) {
     await this.load();
 
     const id = crypto.randomUUID();
@@ -109,7 +111,7 @@ class WhisperClient {
 
     return new Promise<string>((resolve, reject) => {
       this.pending.set(id, { resolve, reject });
-      this.worker?.postMessage({ type: "transcribe", id, audio: copy }, [copy.buffer]);
+      this.worker?.postMessage({ type: "transcribe", id, audio: copy, options }, [copy.buffer]);
     });
   }
 
