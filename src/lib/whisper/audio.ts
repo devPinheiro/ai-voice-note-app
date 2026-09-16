@@ -10,6 +10,28 @@ export const LIVE_MIN_SAMPLES = TARGET_SAMPLE_RATE * LIVE_MIN_SECONDS;
 export const FILE_CHUNK_SECONDS = 30;
 export const FILE_STRIDE_SECONDS = 5;
 export const FILE_CHUNK_SAMPLES = TARGET_SAMPLE_RATE * FILE_CHUNK_SECONDS;
+export const FILE_HOP_SAMPLES = FILE_CHUNK_SAMPLES - TARGET_SAMPLE_RATE * FILE_STRIDE_SECONDS;
+export const LARGE_FILE_BYTES = 2 * 1024 * 1024;
+export const LARGE_FILE_SAMPLES = TARGET_SAMPLE_RATE * 120;
+
+export function isLargeMediaJob(file: File, pcm: Float32Array) {
+  return file.size >= LARGE_FILE_BYTES || pcm.length >= LARGE_FILE_SAMPLES;
+}
+
+export function countPcmChunks(length: number) {
+  if (length <= 0) {
+    return 0;
+  }
+  if (length <= FILE_CHUNK_SAMPLES) {
+    return 1;
+  }
+  return Math.ceil((length - FILE_CHUNK_SAMPLES) / FILE_HOP_SAMPLES) + 1;
+}
+
+export function slicePcmChunk(pcm: Float32Array, index: number) {
+  const start = index * FILE_HOP_SAMPLES;
+  return pcm.subarray(start, Math.min(start + FILE_CHUNK_SAMPLES, pcm.length));
+}
 
 export const SILENCE_RMS = 0.012;
 export const SILENCE_HANGOVER_SECONDS = 0.3;

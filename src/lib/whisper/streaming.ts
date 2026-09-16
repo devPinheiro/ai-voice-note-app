@@ -62,3 +62,22 @@ export function agreeWindows(previous: string, next: string) {
     overlapWords: overlap,
   };
 }
+
+export function appendWithOverlap(previous: string, next: string) {
+  const incoming = next.trim();
+  if (!incoming) {
+    return previous;
+  }
+
+  if (!previous.trim()) {
+    return incoming;
+  }
+
+  const nextWords = words(incoming);
+  const { overlapWords } = agreeWindows(previous, incoming);
+  if (overlapWords === 0) {
+    return joinTranscript(previous, incoming);
+  }
+
+  return joinTranscript(previous, nextWords.slice(overlapWords).join(" "));
+}

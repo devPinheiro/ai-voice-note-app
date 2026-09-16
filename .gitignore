@@ -173,3 +173,7 @@ dist
 
 # Finder (MacOS) folder config
 .DS_Store
+
+# Local Whisper ONNX (download with npm run whisper:models)
+public/models/**
+!public/models/.gitkeep

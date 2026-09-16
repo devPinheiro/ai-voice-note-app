@@ -12,6 +12,8 @@ import {
   TARGET_SAMPLE_RATE,
 } from "../lib/whisper/audio";
 import { whisperClient } from "../lib/whisper/client";
+import type { WhisperQuality } from "../lib/whisper/models";
+import { QUALITY_LABELS, shortModelName } from "../lib/whisper/models";
 import { agreeWindows, joinTranscript, promptTail } from "../lib/whisper/streaming";
 import { transcribePcm } from "../lib/whisper/transcribe-media";
 
@@ -32,6 +34,10 @@ export interface VoiceRecordingHook {
   isSupported: boolean;
   modelStatus: ModelStatus;
   modelProgress: number;
+  modelLabel: string;
+  quality: WhisperQuality;
+  setQuality: (quality: WhisperQuality) => Promise<void>;
+  accurateReady: boolean;
   isTranscribing: boolean;
   isFinalizing: boolean;
 }
@@ -84,6 +90,9 @@ export const useVoiceRecording = (): VoiceRecordingHook => {
     whisperClient.isReady() ? "ready" : "idle"
   );
   const [modelProgress, setModelProgress] = useState(whisperClient.isReady() ? 100 : 0);
+  const [modelLabel, setModelLabel] = useState(whisperClient.statusLabel());
+  const [quality, setQualityState] = useState<WhisperQuality>(whisperClient.getQuality());
+  const [accurateReady, setAccurateReady] = useState(whisperClient.isAccurateReady());
   const [isTranscribing, setIsTranscribing] = useState(false);
   const [isFinalizing, setIsFinalizing] = useState(false);
 
@@ -115,7 +124,12 @@ export const useVoiceRecording = (): VoiceRecordingHook => {
   useEffect(() => {
     setIsSupported(microphoneSupported());
 
-    const unsubscribeProgress = whisperClient.onProgress((progress) => {
+    const unsubscribeProgress = whisperClient.onProgress((progress, pass) => {
+      if (whisperClient.isReady() || pass === "accurate") {
+        setModelLabel(whisperClient.statusLabel());
+        return;
+      }
+
       if (progress.status === "progress_total" && typeof progress.progress === "number") {
         setModelProgress(Math.max(0, Math.min(100, Math.round(progress.progress))));
         return;
@@ -129,10 +143,28 @@ export const useVoiceRecording = (): VoiceRecordingHook => {
     const unsubscribeReady = whisperClient.onReady(() => {
       setModelStatus("ready");
       setModelProgress(100);
+      setModelLabel(whisperClient.statusLabel());
+      setQualityState(whisperClient.getQuality());
+      setAccurateReady(whisperClient.isAccurateReady());
       setError(null);
     });
 
+    const unsubscribeAccurate = whisperClient.onAccurateReady(() => {
+      setAccurateReady(true);
+      setModelLabel(whisperClient.statusLabel());
+      setQualityState(whisperClient.getQuality());
+    });
+
+    const unsubscribePrefs = whisperClient.onPrefs((prefs) => {
+      setQualityState(prefs.quality);
+      setModelLabel(whisperClient.statusLabel());
+    });
+
     const unsubscribeError = whisperClient.onError((message) => {
+      if (whisperClient.isReady()) {
+        console.warn("Whisper background error", message);
+        return;
+      }
       setModelStatus("error");
       setError(message);
     });
@@ -140,6 +172,9 @@ export const useVoiceRecording = (): VoiceRecordingHook => {
     if (whisperClient.isReady()) {
       setModelStatus("ready");
       setModelProgress(100);
+      setModelLabel(whisperClient.statusLabel());
+      setAccurateReady(whisperClient.isAccurateReady());
+      setQualityState(whisperClient.getQuality());
     } else {
       setModelStatus("loading");
       whisperClient.load().catch((loadError: unknown) => {
@@ -155,6 +190,8 @@ export const useVoiceRecording = (): VoiceRecordingHook => {
     return () => {
       unsubscribeProgress();
       unsubscribeReady();
+      unsubscribeAccurate();
+      unsubscribePrefs();
       unsubscribeError();
     };
   }, []);
@@ -487,6 +524,25 @@ export const useVoiceRecording = (): VoiceRecordingHook => {
     }
   }, [markTranscribeEnd, markTranscribeStart, publishTranscript, teardownCapture]);
 
+  const setQuality = useCallback(async (next: WhisperQuality) => {
+    setQualityState(next);
+    setAccurateReady(false);
+    setModelLabel(
+      `Whisper ready · ${shortModelName(whisperClient.getLiveModel())} live · loading ${QUALITY_LABELS[next].toLowerCase()} refine`
+    );
+    try {
+      await whisperClient.setQuality(next);
+      setAccurateReady(whisperClient.isAccurateReady());
+      setModelLabel(whisperClient.statusLabel());
+    } catch (qualityError: unknown) {
+      setError(
+        qualityError instanceof Error
+          ? qualityError.message
+          : "Failed to switch Whisper accuracy"
+      );
+    }
+  }, []);
+
   const clearTranscription = useCallback(() => {
     sessionIdRef.current += 1;
     committedRef.current = "";
@@ -516,6 +572,10 @@ export const useVoiceRecording = (): VoiceRecordingHook => {
     isSupported,
     modelStatus,
     modelProgress,
+    modelLabel,
+    quality,
+    setQuality,
+    accurateReady,
     isTranscribing,
     isFinalizing,
   };

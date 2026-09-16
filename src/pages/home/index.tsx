@@ -42,6 +42,7 @@ const HomePage = () => {
     isSupported,
     modelStatus,
     modelProgress,
+    modelLabel,
     isTranscribing,
   } = useVoiceRecording();
 
@@ -188,7 +189,7 @@ const HomePage = () => {
               Speak a note. Whisper transcribes it on this device, then you can save it.
             </p>
           </div>
-          <WhisperStatus status={modelStatus} progress={modelProgress} />
+          <WhisperStatus status={modelStatus} progress={modelProgress} label={modelLabel} />
         </div>
 
         <section
