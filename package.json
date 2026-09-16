@@ -7,7 +7,8 @@
     "dev": "vite",
     "build": "tsc -b && vite build",
     "lint": "eslint .",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "whisper:models": "node scripts/fetch-whisper-models.mjs"
   },
   "dependencies": {
     "@auth/core": "0.37.0",

@@ -1,10 +1,13 @@
 import { LoaderCircle, Mic, Square, Upload } from "lucide-react";
 import { useRef } from "react";
 import type { ModelStatus, RecordingState } from "../../hooks/use-voice-recording";
+import type { WhisperQuality } from "../../lib/whisper/models";
+import { QUALITY_LABELS } from "../../lib/whisper/models";
 import { cn } from "../../lib/utils";
 import { LiveTranscript } from "./live-transcript";
 
 const ACCEPT = "audio/*,video/mp4,video/quicktime,.mp3,.wav,.m4a,.aac,.ogg,.webm,.mp4,.mov";
+const QUALITIES: WhisperQuality[] = ["fast", "balanced", "high"];
 
 interface VoiceHomeProps {
   transcription: string;
@@ -17,6 +20,9 @@ interface VoiceHomeProps {
   isSupported: boolean;
   modelStatus: ModelStatus;
   modelProgress: number;
+  modelLabel: string;
+  quality: WhisperQuality;
+  accurateReady: boolean;
   uploadName: string | null;
   uploadProgress: string | null;
   error: string | null;
@@ -25,6 +31,7 @@ interface VoiceHomeProps {
   onUpload: (file: File) => void;
   onSave: () => void;
   onClear: () => void;
+  onQualityChange: (quality: WhisperQuality) => void;
 }
 
 export function VoiceHome({
@@ -38,6 +45,9 @@ export function VoiceHome({
   isSupported,
   modelStatus,
   modelProgress,
+  modelLabel,
+  quality,
+  accurateReady,
   uploadName,
   uploadProgress,
   error,
@@ -46,15 +56,17 @@ export function VoiceHome({
   onUpload,
   onSave,
   onClear,
+  onQualityChange,
 }: VoiceHomeProps) {
   const fileRef = useRef<HTMLInputElement>(null);
   const isRecording = recordingState === "recording";
   const live = isRecording || isFinalizing || isTranscribing;
   const busy = isTranscribing || Boolean(uploadProgress) || saving;
   const canRecord = isSupported && modelStatus === "ready" && !uploadProgress;
-  const showTranscript = live || Boolean(transcription.trim());
+  const showTranscript = live || Boolean(transcription.trim()) || Boolean(uploadProgress);
   const committed = live ? committedTranscription : transcription;
   const interim = live ? interimTranscription : "";
+  const qualityLocked = live || Boolean(uploadProgress) || modelStatus !== "ready";
 
   const status =
     modelStatus === "loading"
@@ -73,9 +85,33 @@ export function VoiceHome({
 
   return (
     <section className="flex flex-1 flex-col items-center justify-center px-4 py-8">
-      <p className="mb-10 text-sm text-[#8e8e8e]">
-        {modelStatus === "ready" ? "Whisper ready · on-device" : status}
+      <p className="mb-4 text-sm text-[#8e8e8e]">
+        {modelStatus === "ready" ? modelLabel : status}
       </p>
+
+      <div className="mb-8 inline-flex rounded-full border border-white/10 bg-[#2a2a2a] p-1">
+        {QUALITIES.map((option) => (
+          <button
+            key={option}
+            type="button"
+            disabled={qualityLocked}
+            onClick={() => onQualityChange(option)}
+            title={
+              option === "fast"
+                ? "tiny.en for live and files"
+                : option === "high"
+                  ? "tiny.en live, small.en for files when WebGPU allows"
+                  : "tiny.en live, base.en for files when WebGPU allows"
+            }
+            className={cn(
+              "rounded-full px-3 py-1 text-xs transition-colors disabled:opacity-40",
+              quality === option ? "bg-white text-black" : "text-[#8e8e8e] hover:text-white"
+            )}
+          >
+            {QUALITY_LABELS[option]}
+          </button>
+        ))}
+      </div>
 
       <button
         type="button"
@@ -104,7 +140,11 @@ export function VoiceHome({
       <h1 className="mt-8 text-center text-3xl font-semibold tracking-tight">
         {isRecording ? "Listening" : isFinalizing ? "Refining" : uploadProgress ? "Transcribing file" : "Speak a note"}
       </h1>
-      <p className="mt-2 max-w-md text-center text-sm text-[#8e8e8e]">{status}</p>
+      <p className="mt-2 max-w-md text-center text-sm text-[#8e8e8e]">
+        {modelStatus === "ready" && !accurateReady && !uploadProgress && !live
+          ? "Live captions are ready. Higher-accuracy refine is still loading."
+          : status}
+      </p>
 
       <input
         ref={fileRef}
@@ -140,12 +180,18 @@ export function VoiceHome({
         <div className="mt-8 w-full max-w-2xl rounded-2xl border border-white/10 bg-[#2a2a2a] p-5">
           <div className="mb-3 flex items-center justify-between gap-3">
             <p className="text-xs uppercase tracking-wide text-[#8e8e8e]">
-              {isRecording ? "Live transcript" : isFinalizing ? "Refining" : "Transcript"}
+              {isRecording
+                ? "Live transcript"
+                : isFinalizing
+                  ? "Refining"
+                  : uploadProgress
+                    ? "Transcribing"
+                    : "Transcript"}
             </p>
             <button
               type="button"
               onClick={onClear}
-              disabled={live}
+              disabled={live || Boolean(uploadProgress)}
               className="text-xs text-[#8e8e8e] hover:text-white disabled:opacity-40"
             >
               Clear

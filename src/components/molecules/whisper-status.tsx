@@ -4,14 +4,15 @@ import type { ModelStatus } from "../../hooks/use-voice-recording";
 interface WhisperStatusProps {
   status: ModelStatus;
   progress: number;
+  label?: string;
 }
 
-export function WhisperStatus({ status, progress }: WhisperStatusProps) {
+export function WhisperStatus({ status, progress, label }: WhisperStatusProps) {
   if (status === "ready") {
     return (
       <div className="inline-flex items-center gap-2 rounded-full border border-emerald-500/30 bg-emerald-500/10 px-3 py-1 text-xs text-emerald-300">
         <ShieldCheck className="h-3.5 w-3.5" />
-        Whisper ready · on-device
+        {label || "Whisper ready · on-device"}
       </div>
     );
   }

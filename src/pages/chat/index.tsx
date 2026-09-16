@@ -11,7 +11,8 @@ import { VoiceHome } from "../../components/chat/voice-home";
 import { useAuth } from "../../hooks/use-auth";
 import { useVoiceRecording } from "../../hooks/use-voice-recording";
 import { decodeMediaFile } from "../../lib/whisper/audio";
-import { transcribePcm } from "../../lib/whisper/transcribe-media";
+import { whisperClient } from "../../lib/whisper/client";
+import { transcribeMediaPcm } from "../../lib/whisper/transcribe-media";
 
 function joinText(current: string, next: string) {
   const incoming = next.trim();
@@ -50,6 +51,7 @@ const ChatPage = () => {
   const [uploadProgress, setUploadProgress] = useState<string | null>(null);
   const baselineRef = useRef("");
   const threadRef = useRef<HTMLDivElement>(null);
+  const uploadAbortRef = useRef<AbortController | null>(null);
 
   const {
     recordingState,
@@ -64,6 +66,10 @@ const ChatPage = () => {
     isSupported,
     modelStatus,
     modelProgress,
+    modelLabel,
+    quality,
+    setQuality,
+    accurateReady,
     isTranscribing,
     isFinalizing,
   } = useVoiceRecording();
@@ -85,7 +91,14 @@ const ChatPage = () => {
     threadRef.current?.scrollTo({ top: threadRef.current.scrollHeight });
   }, [messages]);
 
+  useEffect(() => {
+    return () => {
+      uploadAbortRef.current?.abort();
+    };
+  }, []);
+
   const resetComposer = () => {
+    uploadAbortRef.current?.abort();
     baselineRef.current = "";
     setInput("");
     setSource("voice");
@@ -155,16 +168,36 @@ const ChatPage = () => {
       await stopRecording({ finalize: false });
     }
 
+    uploadAbortRef.current?.abort();
+    const abort = new AbortController();
+    uploadAbortRef.current = abort;
+
+    const baseline = input;
     setFileError(null);
     setUploadName(file.name);
     setUploadProgress(`Reading ${file.name}…`);
     setSource("voice");
 
     try {
-      const audio = await decodeMediaFile(file);
-      setUploadProgress("Transcribing on-device…");
-      const text = await transcribePcm(audio, (done, total) => {
-        setUploadProgress(`Transcribing ${done} of ${total}…`);
+      setUploadProgress(
+        whisperClient.isAccurateReady()
+          ? `Reading ${file.name}…`
+          : "Loading higher-accuracy Whisper…"
+      );
+      const [audio] = await Promise.all([
+        decodeMediaFile(file),
+        whisperClient.waitForAccurate(),
+      ]);
+      abort.signal.throwIfAborted();
+      setUploadProgress("Preparing chunks…");
+      const text = await transcribeMediaPcm(file, audio, {
+        signal: abort.signal,
+        onProgress: ({ done, total, text: partial }) => {
+          setUploadProgress(`Transcribing ${done} of ${total}…`);
+          if (partial.trim()) {
+            setInput(joinText(baseline, partial));
+          }
+        },
       });
 
       if (!text.trim()) {
@@ -172,17 +205,23 @@ const ChatPage = () => {
         return;
       }
 
-      setInput((current) => joinText(current, text));
+      setInput(joinText(baseline, text));
       if (isHome) {
         clearTranscription();
       }
     } catch (uploadError) {
+      if (abort.signal.aborted) {
+        return;
+      }
       setFileError(
         uploadError instanceof Error ? uploadError.message : "Could not transcribe that file"
       );
     } finally {
-      setUploadName(null);
-      setUploadProgress(null);
+      if (uploadAbortRef.current === abort) {
+        uploadAbortRef.current = null;
+        setUploadName(null);
+        setUploadProgress(null);
+      }
     }
   };
 
@@ -195,6 +234,7 @@ const ChatPage = () => {
     }
 
     prevActiveRef.current = activeId;
+    uploadAbortRef.current?.abort();
     void stopRecording({ finalize: false });
     baselineRef.current = "";
     setInput("");
@@ -276,6 +316,9 @@ const ChatPage = () => {
             isSupported={isSupported}
             modelStatus={modelStatus}
             modelProgress={modelProgress}
+            modelLabel={modelLabel}
+            quality={quality}
+            accurateReady={accurateReady}
             uploadName={uploadName}
             uploadProgress={uploadProgress}
             error={fileError || error}
@@ -284,6 +327,7 @@ const ChatPage = () => {
             onUpload={(file) => void handleUpload(file)}
             onSave={() => void saveTranscript(displayedHomeText, "voice")}
             onClear={resetComposer}
+            onQualityChange={(next) => void setQuality(next)}
           />
         ) : (
           <div className="flex min-h-0 flex-1 flex-col">
@@ -330,7 +374,7 @@ const ChatPage = () => {
               />
 
               <p className="mt-3 pb-2 text-center text-[11px] text-[#8e8e8e]">
-                Whisper runs on this device. Audio never leaves the browser.
+                {modelLabel}. Audio never leaves the browser.
               </p>
             </div>
           </div>
